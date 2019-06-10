@@ -179,6 +179,7 @@ def Train_Model(model, train_dataloader, valid_dataloader, num_epochs = 300, pat
             
             model.zero_grad()
 
+            inputs_other = (age, gender, previous_hospitalization_history)
             outputs, alpha, beta = model(inputs, inputs_other, batch_size)
 
             if output_last:
@@ -210,7 +211,7 @@ def Train_Model(model, train_dataloader, valid_dataloader, num_epochs = 300, pat
                 inputs_val, labels_val = Variable(inputs_val), Variable(labels_val)
                 
             model.zero_grad()
-            
+            inputs_other_val = (age, gender, previous_hospitalization_history)
             outputs_val, alpha_val, beta_val = model(inputs_val, inputs_other_val, batch_size_val)
             
             if output_last:
@@ -356,9 +357,10 @@ if __name__ == "__main__":
     inputs, labels = next(iter(train_dataloader))
     [batch_size, type_size, step_size, fea_size] = inputs.size()
     input_dim = fea_size
-    hidden_dim = fea_size
-    output_dim = fea_size
+    # hidden_dim = fea_size
+    output_dim = labels.shape[-1]
     
-    pat2vec = Patient2Vec(input_dim, hidden_dim, output_dim, X_mean)
+    pat2vec = Patient2Vec(input_size=input_dim, hidden_size=256, n_layers=1, att_dim=1, initrange=1,
+                          output_size=output_dim, rnn_type='GRU', seq_len=4, pad_size=1, n_filters=3, bi=True)
     best_grud, losses_grud = Train_Model(pat2vec, train_dataloader, valid_dataloader)
     [losses_l1, losses_mse, mean_l1, std_l1] = Test_Model(best_grud, test_dataloader)
