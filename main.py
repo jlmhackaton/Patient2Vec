@@ -7,7 +7,10 @@ Created on Sat May 12 16:49:49 2018
 
 from Patient2Vec import *
 
-def PrepareDataset(speed_matrix, \
+TIME_COL_HDR = 'Time_inED'
+SUBJECT_COL_HDR = 'SUBJECT_ID'
+
+def PrepareDataset(data_path, \
                    BATCH_SIZE = 40, \
                    seq_len = 10, \
                    pred_len = 1, \
@@ -15,29 +18,54 @@ def PrepareDataset(speed_matrix, \
                    valid_propotion = 0.2):
     """ Prepare training and testing datasets and dataloaders.
     
-    Convert speed/volume/occupancy matrix to training and testing dataset. 
-    The vertical axis of speed_matrix is the time axis and the horizontal axis 
-    is the spatial axis.
+    Convert admissions table to training and testing dataset.
+    The vertical axis of admissions_pd is the admission time axis and the horizontal axis
+    is the features axis.
     
     Args:
-        speed_matrix: a Matrix containing spatial-temporal speed data for a network
+        admissions_pd: a Matrix containing spatial-temporal speed data for a network
         seq_len: length of input sequence
         pred_len: length of predicted sequence
     Returns:
         Training dataloader
         Testing dataloader
     """
-    time_len = speed_matrix.shape[0]
-    
-    speed_matrix = speed_matrix.clip(0, 100)
 
-    max_speed = speed_matrix.max().max()
-    speed_matrix =  speed_matrix / max_speed
+    admissions_pd = pd.read_csv(data_path) #header = None, names=["Eloss", "entropy", "loss", "tErr", "rotErr", "r1", "r2", "r3", "tx", "ty", "tz" ], index_col=False, skiprows=0, delimiter=" "
+    grouped_byID = admissions_pd.groupby(SUBJECT_COL_HDR)
+    max_admin_per_patient = 2
+    features_list = []
+    for group in grouped_byID:
+        date_sorted = group[1].sort_values(by=[TIME_COL_HDR])
+        features = date_sorted[admissions_pd.columns[2:]].values
+        features_list.append(features)
+
+    # print('Building pid-admission mapping, admission-date mapping')
+    # pidAdmMap = {}
+    # admDateMap = {}
+    # infd = open(admissionFile, 'r')
+    # for row in ad
+    # infd.readline()
+    # for line in infd:
+    #     tokens = line.strip().split(',')
+    #     pid = int(tokens[1])
+    #     admId = int(tokens[2])
+    #     admTime = datetime.strptime(tokens[3], '%Y-%m-%d %H:%M:%S')
+    #     admDateMap[admId] = admTime
+    #     if pid in pidAdmMap:
+    #         pidAdmMap[pid].append(admId)
+    #     else:
+    #         pidAdmMap[pid] = [admId]
+    # infd.close()
+
+    # admissions_pd = admissions_pd.clip(0, 100)
+    # max_speed = admissions_pd.max().max()
+    # admissions_pd = admissions_pd / max_speed
     
     speed_sequences, speed_labels = [], []
-    for i in range(time_len - seq_len - pred_len):
-        speed_sequences.append(speed_matrix.iloc[i:i+seq_len].values)
-        speed_labels.append(speed_matrix.iloc[i+seq_len:i+seq_len+pred_len].values)
+    for i in range(num_admissions - seq_len - pred_len):
+        speed_sequences.append(admissions_pd.iloc[i:i+seq_len].values)
+        speed_labels.append(admissions_pd.iloc[i+seq_len:i+seq_len+pred_len].values)
     speed_sequences, speed_labels = np.asarray(speed_sequences), np.asarray(speed_labels)
     
     # using zero-one mask to randomly set elements to zeros
@@ -349,10 +377,9 @@ def Test_Model(model, test_dataloader, max_speed):
 
 if __name__ == "__main__":
     
-    data = 'path/to/data'
-    speed_matrix = pd.read_pickle(data)
+    data_path = './data/input.csv'
         
-    train_dataloader, valid_dataloader, test_dataloader, X_mean = PrepareDataset(speed_matrix, BATCH_SIZE=64)
+    train_dataloader, valid_dataloader, test_dataloader, X_mean = PrepareDataset(data_path, BATCH_SIZE=64)
     
     inputs, labels = next(iter(train_dataloader))
     [batch_size, type_size, step_size, fea_size] = inputs.size()
