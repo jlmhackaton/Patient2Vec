@@ -59,7 +59,7 @@ class Patient2Vec(nn.Module):
         # initialize 2-layer attention weight matrics
         self.att_w1 = nn.Linear(hidden_size * self.b, att_dim, bias=False)
         # final linear layer
-        self.linear = nn.Linear(hidden_size * self.b * n_filters + 3, output_size, bias=True)
+        self.linear = nn.Linear(hidden_size * self.b * n_filters + 0, output_size, bias=True)
 
         self.func_softmax = nn.Softmax()
         self.func_sigmoid = nn.Sigmoid()
@@ -83,14 +83,16 @@ class Patient2Vec(nn.Module):
         """
         for param in self.parameters():
             param.data.uniform_(-self.initrange, self.initrange)
-
+    # FIRAS: paper expected input pf [ batch_size, 4, 6 , 100]. we have [ batch_size, 2, 100]
     def convolutional_layer(self, inputs):
+        #my_quick fix, adding dummy "subsequence": repeat medical code
+        inputs_rep = np.repeat(inputs, self.pad_size, axis=2).reshape([inputs.shape[0],inputs.shape[1],inputs.shape[1],inputs.shape[2]])
         convolution_all = []
         conv_wts = []
         for i in range(self.seq_len):
             convolution_one_month = []
             for j in range(self.pad_size):
-                convolution = self.conv(torch.unsqueeze(inputs[:, i, j], dim=1))
+                convolution = self.conv(torch.unsqueeze(inputs_rep[:, i, j], dim=1))
                 convolution_one_month.append(convolution)
             convolution_one_month = torch.stack(convolution_one_month)
             convolution_one_month = torch.squeeze(convolution_one_month, dim=3)
@@ -99,7 +101,7 @@ class Patient2Vec(nn.Module):
             convolution_one_month = torch.squeeze(convolution_one_month, dim=1)
             convolution_one_month = self.func_tanh(convolution_one_month)
             convolution_one_month = torch.unsqueeze(convolution_one_month, dim=1)
-            vec = torch.bmm(convolution_one_month, inputs[:, i])
+            vec = torch.bmm(convolution_one_month, inputs_rep[:, i])
             convolution_all.append(vec)
             conv_wts.append(convolution_one_month)
         convolution_all = torch.stack(convolution_all, dim=1)
@@ -141,7 +143,9 @@ class Patient2Vec(nn.Module):
         # Add attentions and get context vector
         beta, context = self.add_beta_attention(states_rnn, batch_size)
         # Final linear layer with demographic info added as extra variables
-        context_v2 = torch.cat((context, inputs_other), 1)
+        context_v2 = context
+        # TODO: put back
+        # context_v2 = torch.cat((context, np.array(inputs_other)), 1)
         linear_y = self.linear(context_v2)
         out = self.func_softmax(linear_y)
         return out, alpha, beta

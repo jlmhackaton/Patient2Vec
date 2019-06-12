@@ -9,13 +9,17 @@ from Patient2Vec import *
 
 TIME_COL_HDR = 'Time_inED'
 SUBJECT_COL_HDR = 'SUBJECT_ID'
+SUBJECT_COLTAG_HDR = 'HADM_ID'
+TAG_HDR = 'INTERPRETATION'
 
-def PrepareDataset(data_path, \
+def PrepareDataset(features_data_path, \
+                   tags_data_path,\
                    BATCH_SIZE = 40, \
                    seq_len = 10, \
                    pred_len = 1, \
                    train_propotion = 0.7, \
-                   valid_propotion = 0.2):
+                   valid_propotion = 0.2,
+                   shuffle=False):
     """ Prepare training and testing datasets and dataloaders.
     
     Convert admissions table to training and testing dataset.
@@ -31,104 +35,60 @@ def PrepareDataset(data_path, \
         Testing dataloader
     """
 
-    admissions_pd = pd.read_csv(data_path) #header = None, names=["Eloss", "entropy", "loss", "tErr", "rotErr", "r1", "r2", "r3", "tx", "ty", "tz" ], index_col=False, skiprows=0, delimiter=" "
-    grouped_byID = admissions_pd.groupby(SUBJECT_COL_HDR)
-    max_admin_per_patient = 2
+    admissions_pd = pd.read_csv(features_data_path) #header = None, names=["Eloss", "entropy", "loss", "tErr", "rotErr", "r1", "r2", "r3", "tx", "ty", "tz" ], index_col=False, skiprows=0, delimiter=" "
+    admissions_byID = admissions_pd.groupby(SUBJECT_COL_HDR)
+
+    tag_pd = pd.read_csv(tags_data_path)
+    tags_byID = tag_pd.groupby(SUBJECT_COLTAG_HDR)
+
+    max_admin_per_patient = 0
     features_list = []
-    for group in grouped_byID:
+    tag_list = []
+    for group, tag_it in zip(admissions_byID, tags_byID):
         date_sorted = group[1].sort_values(by=[TIME_COL_HDR])
         features = date_sorted[admissions_pd.columns[2:]].values
         features_list.append(features)
+        max_admin_per_patient = max(max_admin_per_patient, features.shape[0])
 
-    # print('Building pid-admission mapping, admission-date mapping')
-    # pidAdmMap = {}
-    # admDateMap = {}
-    # infd = open(admissionFile, 'r')
-    # for row in ad
-    # infd.readline()
-    # for line in infd:
-    #     tokens = line.strip().split(',')
-    #     pid = int(tokens[1])
-    #     admId = int(tokens[2])
-    #     admTime = datetime.strptime(tokens[3], '%Y-%m-%d %H:%M:%S')
-    #     admDateMap[admId] = admTime
-    #     if pid in pidAdmMap:
-    #         pidAdmMap[pid].append(admId)
-    #     else:
-    #         pidAdmMap[pid] = [admId]
-    # infd.close()
+        tag = tag_it[1][[TAG_HDR]].values[0]
+        tag_list.append(tag)
 
-    # admissions_pd = admissions_pd.clip(0, 100)
-    # max_speed = admissions_pd.max().max()
-    # admissions_pd = admissions_pd / max_speed
-    
-    speed_sequences, speed_labels = [], []
-    for i in range(num_admissions - seq_len - pred_len):
-        speed_sequences.append(admissions_pd.iloc[i:i+seq_len].values)
-        speed_labels.append(admissions_pd.iloc[i+seq_len:i+seq_len+pred_len].values)
-    speed_sequences, speed_labels = np.asarray(speed_sequences), np.asarray(speed_labels)
-    
-    # using zero-one mask to randomly set elements to zeros
-    if False:
-        print('Split Speed finished. Start to generate Mask, Delta, Last_observed_X ...')
+    print('Maximum number of admissions per patient is ' + str(max_admin_per_patient))
+    sample_size = len(features_list)
+    features_nd = np.zeros([sample_size,max_admin_per_patient, features_list[0].shape[-1]])
+
+    for idx, patient_adm in enumerate(features_list):
+        h = patient_adm.shape[0]
+        features_nd[idx, 0:h] = patient_adm
+
+    # shuffle = True
+    if shuffle: # doesn't work !! need to debug
+        # shuffle and split the dataset to training and testing datasets
+        print('Start to shuffle and split dataset ...')
+        index = np.arange(sample_size, dtype = int)
         np.random.seed(1024)
-        Mask = np.random.choice([0,1], size=(speed_sequences.shape), p = [1 - mask_ones_proportion, mask_ones_proportion])
-        speed_sequences = np.multiply(speed_sequences, Mask)
-        
-        # temporal information
-        interval = 5 # 5 minutes
-        S = np.zeros_like(speed_sequences) # time stamps
-        for i in range(S.shape[1]):
-            S[:,i,:] = interval * i
+        np.random.shuffle(index)
 
-        Delta = np.zeros_like(speed_sequences) # time intervals
-        for i in range(1, S.shape[1]):
-            Delta[:,i,:] = S[:,i,:] - S[:,i-1,:]
-
-        missing_index = np.where(Mask == 0)
-
-        X_last_obsv = np.copy(speed_sequences)
-        for idx in range(missing_index[0].shape[0]):
-            i = missing_index[0][idx]
-            j = missing_index[1][idx]
-            k = missing_index[2][idx]
-            if j != 0 and j != 9:
-                Delta[i,j+1,k] = Delta[i,j+1,k] + Delta[i,j,k]
-            if j != 0:
-                X_last_obsv[i,j,k] = X_last_obsv[i,j-1,k] # last observation
-        Delta = Delta / Delta.max() # normalize
-    
-    # shuffle and split the dataset to training and testing datasets
-    print('Generate Mask, Delta, Last_observed_X finished. Start to shuffle and split dataset ...')
-    sample_size = speed_sequences.shape[0]
-    index = np.arange(sample_size, dtype = int)
-    np.random.seed(1024)
-    np.random.shuffle(index)
-    
-    speed_sequences = speed_sequences[index]
-    speed_labels = speed_labels[index]
+        features_nd = features_nd[index]
+        tag_list = np.array(tag_list)
+        tag_list = tag_list[index]
 
     if False:
         X_last_obsv = X_last_obsv[index]
         Mask = Mask[index]
         Delta = Delta[index]
-        speed_sequences = np.expand_dims(speed_sequences, axis=1)
+        features_list = np.expand_dims(features_list, axis=1)
         X_last_obsv = np.expand_dims(X_last_obsv, axis=1)
         Mask = np.expand_dims(Mask, axis=1)
         Delta = np.expand_dims(Delta, axis=1)
-        dataset_agger = np.concatenate((speed_sequences, X_last_obsv, Mask, Delta), axis = 1)
+        dataset_agger = np.concatenate((features_list, X_last_obsv, Mask, Delta), axis = 1)
 
     train_index = int(np.floor(sample_size * train_propotion))
-    valid_index = int(np.floor(sample_size * ( train_propotion + valid_propotion)))
+    valid_index = int(np.floor(sample_size * (train_propotion + valid_propotion)))
 
-    if False:
-        train_data, train_label = dataset_agger[:train_index], speed_labels[:train_index]
-        valid_data, valid_label = dataset_agger[train_index:valid_index], speed_labels[train_index:valid_index]
-        test_data, test_label = dataset_agger[valid_index:], speed_labels[valid_index:]
-    else:
-        train_data, train_label = speed_sequences[:train_index], speed_labels[:train_index]
-        valid_data, valid_label = speed_sequences[train_index:valid_index], speed_labels[train_index:valid_index]
-        test_data, test_label = speed_sequences[valid_index:], speed_labels[valid_index:]
+    train_data, train_label = features_nd[:train_index], tag_list[:train_index]
+    valid_data, valid_label = features_nd[train_index:valid_index], tag_list[train_index:valid_index]
+    test_data, test_label = features_nd[valid_index:], tag_list[valid_index:]
     
     train_data, train_label = torch.Tensor(train_data), torch.Tensor(train_label)
     valid_data, valid_label = torch.Tensor(valid_data), torch.Tensor(valid_label)
@@ -138,19 +98,18 @@ def PrepareDataset(data_path, \
     valid_dataset = utils.TensorDataset(valid_data, valid_label)
     test_dataset = utils.TensorDataset(test_data, test_label)
     
-    train_dataloader = utils.DataLoader(train_dataset, batch_size = BATCH_SIZE, shuffle=True, drop_last = True)
-    valid_dataloader = utils.DataLoader(valid_dataset, batch_size = BATCH_SIZE, shuffle=True, drop_last = True)
-    test_dataloader = utils.DataLoader(test_dataset, batch_size = BATCH_SIZE, shuffle=True, drop_last = True)
+    train_dataloader = utils.DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, drop_last=True)
+    valid_dataloader = utils.DataLoader(valid_dataset, batch_size=BATCH_SIZE, shuffle=True, drop_last=True)
+    test_dataloader = utils.DataLoader(test_dataset, batch_size=BATCH_SIZE, shuffle=True, drop_last=True)
     
-    X_mean = np.mean(speed_sequences, axis = 0)
+    # X_mean = np.mean(features_list, axis = 0)
     
-    print('Finished')
+    print('Finished preprocessing')
     
-    return train_dataloader, valid_dataloader, test_dataloader, X_mean
+    return train_dataloader, valid_dataloader, test_dataloader
 
 
-
-def Train_Model(model, train_dataloader, valid_dataloader, num_epochs = 300, patience = 10, min_delta = 0.00001):
+def Train_Model(model, train_dataloader, valid_dataloader, batch_size, num_epochs = 300, patience=10, min_delta = 0.00001):
     
     print('Model Structure: ', model)
     print('Start Training ... ')
@@ -165,15 +124,15 @@ def Train_Model(model, train_dataloader, valid_dataloader, num_epochs = 300, pat
     #     output_last = model.output_last
     #     print('Output type dermined by the model')
         
-    loss_MSE = torch.nn.MSELoss()
-    loss_L1 = torch.nn.L1Loss()
+    # loss_MSE = torch.nn.MSELoss()
+    # loss_L1 = torch.nn.L1Loss()
     criterion = nn.BCELoss()
     
     learning_rate = 0.0001
     optimizer = torch.optim.RMSprop(model.parameters(), lr = learning_rate, alpha=0.99)
     use_gpu = torch.cuda.is_available()
     
-    interval = 100
+    # interval = 100
     losses_train = []
     losses_valid = []
     losses_epochs_train = []
@@ -207,15 +166,16 @@ def Train_Model(model, train_dataloader, valid_dataloader, num_epochs = 300, pat
             
             model.zero_grad()
 
-            inputs_other = (age, gender, previous_hospitalization_history)
+            # TODO: extract them
+            inputs_other = []#(age, gender, previous_hospitalization_history)
             outputs, alpha, beta = model(inputs, inputs_other, batch_size)
 
-            if output_last:
-                # loss_train = loss_MSE(torch.squeeze(outputs), torch.squeeze(labels))
-                loss_train = get_loss(outputs, labels, criterion=criterion, mtr=beta)
-            else:
-                full_labels = torch.cat((inputs[:,1:,:], labels), dim = 1)
-                loss_train = loss_MSE(outputs, full_labels)
+            # if output_last:
+            #     # loss_train = loss_MSE(torch.squeeze(outputs), torch.squeeze(labels))
+            loss_train = get_loss(outputs, labels, criterion=criterion, mtr=beta)
+            # else:
+            #     full_labels = torch.cat((inputs[:,1:,:], labels), dim = 1)
+            #     loss_train = loss_MSE(outputs, full_labels)
         
             losses_train.append(loss_train.data)
             losses_epoch_train.append(loss_train.data)
@@ -239,15 +199,17 @@ def Train_Model(model, train_dataloader, valid_dataloader, num_epochs = 300, pat
                 inputs_val, labels_val = Variable(inputs_val), Variable(labels_val)
                 
             model.zero_grad()
-            inputs_other_val = (age, gender, previous_hospitalization_history)
-            outputs_val, alpha_val, beta_val = model(inputs_val, inputs_other_val, batch_size_val)
+            # TODO: extract them
+            inputs_other = []  # (age, gender, previous_hospitalization_history)
+            inputs_other_val = []  # (age, gender, previous_hospitalization_history)
+            outputs_val, alpha_val, beta_val = model(inputs_val, inputs_other_val, batch_size)
             
-            if output_last:
-                # loss_valid = loss_MSE(torch.squeeze(outputs_val), torch.squeeze(labels_val))
-                loss_valid = get_loss(outputs, labels, criterion=criterion, mtr=beta_val)
-            else:
-                full_labels_val = torch.cat((inputs_val[:,1:,:], labels_val), dim = 1)
-                loss_valid = loss_MSE(outputs_val, full_labels_val)
+            # if output_last:
+            #     # loss_valid = loss_MSE(torch.squeeze(outputs_val), torch.squeeze(labels_val))
+            loss_valid = get_loss(outputs_val, labels_val, criterion=criterion, mtr=beta_val)
+            # else:
+            #     full_labels_val = torch.cat((inputs_val[:,1:,:], labels_val), dim = 1)
+            #     loss_valid = loss_MSE(outputs_val, full_labels_val)
 
             losses_valid.append(loss_valid.data)
             losses_epoch_valid.append(loss_valid.data)
@@ -271,6 +233,7 @@ def Train_Model(model, train_dataloader, valid_dataloader, num_epochs = 300, pat
             if min_loss_epoch_valid - avg_losses_epoch_valid > min_delta:
                 is_best_model = 1
                 best_model = model
+                torch.save(model.state_dict(), 'best_model.pt')
                 min_loss_epoch_valid = avg_losses_epoch_valid 
                 patient_epoch = 0
             else:
@@ -293,28 +256,29 @@ def Train_Model(model, train_dataloader, valid_dataloader, num_epochs = 300, pat
     return best_model, [losses_train, losses_valid, losses_epochs_train, losses_epochs_valid]
 
 
-def Test_Model(model, test_dataloader, max_speed):
+def Test_Model(model, test_dataloader, batch_size):
     
-    if (type(model) == nn.modules.container.Sequential):
-        output_last = model[-1].output_last
-    else:
-        output_last = model.output_last
+    # if (type(model) == nn.modules.container.Sequential):
+    #     output_last = model[-1].output_last
+    # else:
+    #     output_last = model.output_last
     
     inputs, labels = next(iter(test_dataloader))
-    [batch_size, type_size, step_size, fea_size] = inputs.size()
 
     cur_time = time.time()
     pre_time = time.time()
     
     use_gpu = torch.cuda.is_available()
     
-    loss_MSE = torch.nn.MSELoss()
-    loss_L1 = torch.nn.MSELoss()
-    
+    # loss_MSE = torch.nn.MSELoss()
+    # loss_L1 = torch.nn.MSELoss()
+    criterion = nn.BCELoss()
+
     tested_batch = 0
     
-    losses_mse = []
-    losses_l1 = [] 
+    # losses_mse = []
+    losses_bce = []
+    # losses_l1 = []
     MAEs = []
     MAPEs = []
 
@@ -329,25 +293,29 @@ def Test_Model(model, test_dataloader, max_speed):
             inputs, labels = Variable(inputs.cuda()), Variable(labels.cuda())
         else: 
             inputs, labels = Variable(inputs), Variable(labels)
-        
-        outputs = model(inputs)
+
+        # TODO: extract them
+        inputs_other = []  # (age, gender, previous_hospitalization_history)
+        outputs, alpha, beta = model(inputs, inputs_other, batch_size)
     
-        loss_MSE = torch.nn.MSELoss()
-        loss_L1 = torch.nn.L1Loss()
+        # loss_MSE = torch.nn.MSELoss()
+        # loss_L1 = torch.nn.L1Loss()
         
-        if output_last:
-            loss_mse = loss_MSE(torch.squeeze(outputs), torch.squeeze(labels))
-            loss_l1 = loss_L1(torch.squeeze(outputs), torch.squeeze(labels))
-            MAE = torch.mean(torch.abs(torch.squeeze(outputs) - torch.squeeze(labels)))
-            MAPE = torch.mean(torch.abs(torch.squeeze(outputs) - torch.squeeze(labels)) / torch.squeeze(labels))
-        else:
-            loss_mse = loss_MSE(outputs[:,-1,:], labels)
-            loss_l1 = loss_L1(outputs[:,-1,:], labels)
-            MAE = torch.mean(torch.abs(outputs[:,-1,:] - torch.squeeze(labels)))
-            MAPE = torch.mean(torch.abs(outputs[:,-1,:] - torch.squeeze(labels)) / torch.squeeze(labels))
+        loss_bce = get_loss(outputs, labels, criterion, beta)
+        # if output_last:
+        #     loss_mse = loss_MSE(torch.squeeze(outputs), torch.squeeze(labels))
+        #     loss_l1 = loss_L1(torch.squeeze(outputs), torch.squeeze(labels))
+        MAE = torch.mean(torch.abs(torch.squeeze(outputs) - torch.squeeze(labels)))
+        MAPE = torch.mean(torch.abs(torch.squeeze(outputs) - torch.squeeze(labels)) / torch.squeeze(labels))
+        # else:
+        #     loss_mse = loss_MSE(outputs[:,-1,:], labels)
+        #     loss_l1 = loss_L1(outputs[:,-1,:], labels)
+        #     MAE = torch.mean(torch.abs(outputs[:,-1,:] - torch.squeeze(labels)))
+        #     MAPE = torch.mean(torch.abs(outputs[:,-1,:] - torch.squeeze(labels)) / torch.squeeze(labels))
             
-        losses_mse.append(loss_mse.data)
-        losses_l1.append(loss_l1.data)
+        # losses_mse.append(loss_mse.data)
+        # losses_l1.append(loss_l1.data)
+        losses_bce.append(loss_bce.data)
         MAEs.append(MAE.data)
         MAPEs.append(MAPE.data)
         
@@ -355,39 +323,59 @@ def Test_Model(model, test_dataloader, max_speed):
     
         if tested_batch % 1000 == 0:
             cur_time = time.time()
-            print('Tested #: {}, loss_l1: {}, loss_mse: {}, time: {}'.format( \
+            print('Tested #: {}, loss_bce: {}, time: {}'.format( \
                   tested_batch * batch_size, \
-                  np.around([loss_l1.data[0]], decimals=8), \
-                  np.around([loss_mse.data[0]], decimals=8), \
+                  np.around([loss_bce.data[0]], decimals=8), \
+                  # np.around([loss_mse.data[0]], decimals=8), \
                   np.around([cur_time - pre_time], decimals=8) ) )
             pre_time = cur_time
-    losses_l1 = np.array(losses_l1)
-    losses_mse = np.array(losses_mse)
+    losses_bce = np.array(losses_bce)
+    # losses_l1 = np.array(losses_l1)
+    # losses_mse = np.array(losses_mse)
     MAEs = np.array(MAEs)
     MAPEs = np.array(MAPEs)
     
-    mean_l1 = np.mean(losses_l1) * max_speed
-    std_l1 = np.std(losses_l1) * max_speed
-    MAE_ = np.mean(MAEs) * max_speed
+    mean_l1 = np.mean(losses_bce)
+    std_l1 = np.std(losses_bce)
+    MAE_ = np.mean(MAEs)
     MAPE_ = np.mean(MAPEs) * 100
     
-    print('Tested: L1_mean: {}, L1_std: {}, MAE: {} MAPE: {}'.format(mean_l1, std_l1, MAE_, MAPE_))
-    return [losses_l1, losses_mse, mean_l1, std_l1]
+    print('Tested: bce_mean: {}, bce_std: {}, MAE: {} MAPE: {}'.format(mean_l1, std_l1, MAE_, MAPE_))
+    return [losses_bce, mean_l1, std_l1]
 
 
 if __name__ == "__main__":
-    
-    data_path = './data/input.csv'
-        
-    train_dataloader, valid_dataloader, test_dataloader, X_mean = PrepareDataset(data_path, BATCH_SIZE=64)
+
+    # TODO: pick demographic features and remove them from feature. remove the comment that ignores them
+    # TODO: add the dimension of the added demographic features to the last linear layer
+    # TODO: remove the repeat trick
+    # TODO: adapt the test/train code
+    # TODO: save & load the model and data
+    ##########################################################3
+    ###########         configurations
+    ###########################################################
+    features_datapath = './data/input.csv'
+    tags_datapath = './data/output.csv'
+    load_model = False
+    batch_size = 1
+    shuffle = False     # shuffle dataset
+
+    ############################################################
+
+    train_dataloader, valid_dataloader, test_dataloader = PrepareDataset(features_data_path=features_datapath,
+                                tags_data_path=tags_datapath, BATCH_SIZE=batch_size, shuffle =shuffle)
     
     inputs, labels = next(iter(train_dataloader))
-    [batch_size, type_size, step_size, fea_size] = inputs.size()
-    input_dim = fea_size
-    # hidden_dim = fea_size
+    [batch_size, seq_len, input_dim] = inputs.size()
     output_dim = labels.shape[-1]
-    
+
     pat2vec = Patient2Vec(input_size=input_dim, hidden_size=256, n_layers=1, att_dim=1, initrange=1,
-                          output_size=output_dim, rnn_type='GRU', seq_len=4, pad_size=1, n_filters=3, bi=True)
-    best_grud, losses_grud = Train_Model(pat2vec, train_dataloader, valid_dataloader)
-    [losses_l1, losses_mse, mean_l1, std_l1] = Test_Model(best_grud, test_dataloader)
+                          output_size=output_dim, rnn_type='GRU', seq_len=seq_len, pad_size=2,
+                          n_filters=3, bi=True)
+    if not load_model:
+        best_grud, losses_grud = Train_Model(pat2vec, train_dataloader, valid_dataloader, num_epochs = 40, batch_size=batch_size)
+        [losses_bce, mean_l1, std_l1] = Test_Model(best_grud, test_dataloader, batch_size=batch_size)
+    else:
+        pat2vec.load_state_dict(torch.load('best_model.pt'))
+        # pat2vec.eval()
+        [losses_mse, mean_l1, std_l1] = Test_Model(pat2vec, test_dataloader, batch_size=batch_size)
