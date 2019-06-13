@@ -86,7 +86,7 @@ class Patient2Vec(nn.Module):
     # FIRAS: paper expected input pf [ batch_size, 4, 6 , 100]. we have [ batch_size, 2, 100]
     def convolutional_layer(self, inputs):
         #my_quick fix, adding dummy "subsequence": repeat medical code
-        inputs_rep = np.repeat(inputs, self.pad_size, axis=2).reshape([inputs.shape[0],inputs.shape[1],inputs.shape[1],inputs.shape[2]])
+        inputs_rep = np.repeat(inputs, self.pad_size, axis=2).reshape([inputs.shape[0],inputs.shape[1],-1,inputs.shape[2]])
         convolution_all = []
         conv_wts = []
         for i in range(self.seq_len):
@@ -151,7 +151,7 @@ class Patient2Vec(nn.Module):
         return out, alpha, beta
 
 
-def get_loss(pred, y, criterion, mtr, a=0.5):
+def get_loss(pred, y, criterion, mtr, a=0):
     """
     To calculate loss
     :param pred: predicted value
